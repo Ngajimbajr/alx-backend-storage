@@ -1,39 +1,38 @@
 #!/usr/bin/env python3
 """Module containing function to return HTML content of a particular URL"""
-import redis
 import requests
+import time
 from functools import wraps
 
-data = redis.Redis()
+def cache_with_tracking(func):
+    cache = {}
 
-
-def cached_content_fun(method):
-    """Function that returns html content"""
-
-    @wraps(method)
-    def wrapper(url: str):
-        cached_content = data.get(f"cached:{url}")
-        if cached_content:
-            return cached_content.decode('utf-8')
-
-        content = method(url)
-        data.setex(f"cached:{url}", 10, content)
-        return content
+    @wraps(func)
+    def wrapper(url):
+        # Check if the URL is in cache and if it's not expired
+        if url in cache and time.time() - cache[url]['timestamp'] < 10:
+            cache[url]['count'] += 1
+            return cache[url]['content']
+        else:
+            content = func(url)
+            cache[url] = {'content': content, 'timestamp': time.time(), 'count': 1}
+            return content
 
     return wrapper
 
+@cache_with_tracking
+def get_page(url):
+    response = requests.get(url)
+    return response.text
 
-@cached_content_fun
-def get_page(url: str) -> str:
-    """Function thattracks how many times a particular URL was accessed"""
+# Test the function
+if __name__ == "__main__":
+    url = "http://slowwly.robertomurray.co.uk/delay/1000/url/http://www.google.com"
+    for _ in range(3):
+        print(get_page(url))
 
-    count = data.incr(f"count:{url}")
-    content = requests.get(url).text
-    # print(content)
-    # print("Count: {}".format(count))
-    return content
+    # Wait for cache expiration
+    time.sleep(11)
 
-
-# if __name__ == "__main__":
-    # get_page('http://slowwly.robertomurray.co.uk')
-    # get_page('http://google.com')
+    # Access the same URL again
+    print(get_page(url))
