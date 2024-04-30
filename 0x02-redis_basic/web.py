@@ -1,38 +1,38 @@
 #!/usr/bin/env python3
-"""Module containing function to return HTML content of a particular URL"""
+'''A module with tools for request caching and tracking.
+'''
+import redis
 import requests
-import time
 from functools import wraps
+from typing import Callable
 
-def cache_with_tracking(func):
-    cache = {}
 
-    @wraps(func)
-    def wrapper(url):
-        # Check if the URL is in cache and if it's not expired
-        if url in cache and time.time() - cache[url]['timestamp'] < 10:
-            cache[url]['count'] += 1
-            return cache[url]['content']
-        else:
-            content = func(url)
-            cache[url] = {'content': content, 'timestamp': time.time(), 'count': 1}
-            return content
+redis_store = redis.Redis()
+'''The module-level Redis instance.
+'''
 
-    return wrapper
 
-@cache_with_tracking
-def get_page(url):
-    response = requests.get(url)
-    return response.text
+def data_cacher(method: Callable) -> Callable:
+    '''Caches the output of fetched data.
+    '''
+    @wraps(method)
+    def invoker(url) -> str:
+        '''The wrapper function for caching the output.
+        '''
+        redis_store.incr(f'count:{url}')
+        result = redis_store.get(f'result:{url}')
+        if result:
+            return result.decode('utf-8')
+        result = method(url)
+        redis_store.set(f'count:{url}', 0)
+        redis_store.setex(f'result:{url}', 10, result)
+        return result
+    return invoker
 
-# Test the function
-if __name__ == "__main__":
-    url = "http://slowwly.robertomurray.co.uk/delay/1000/url/http://www.google.com"
-    for _ in range(3):
-        print(get_page(url))
 
-    # Wait for cache expiration
-    time.sleep(11)
-
-    # Access the same URL again
-    print(get_page(url))
+@data_cacher
+def get_page(url: str) -> str:
+    '''Returns the content of a URL after caching the request's response,
+    and tracking the request.
+    '''
+    return requests.get(url).text
