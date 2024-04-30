@@ -1,34 +1,54 @@
 #!/usr/bin/env python3
+"""
+Module to provide a cache decorator for web page retrieval.
+"""
+
 import requests
-import time
-from functools import wraps
-from typing import Dict
+import redis
+from typing import Callable
 
-cache: Dict[str, str] = {}
+redis_client = redis.Redis()
 
-def get_page(url: str) -> str:
-    if url in cache:
-        print(f"Retrieving from cache: {url}")
-        return cache[url]
-    else:
-        print(f"Retrieving from web: {url}")
-        response = requests.get(url)
-        result = response.text
-        cache[url] = result
+
+def cache_decorator(func: Callable) -> Callable:
+    """
+    Decorator to cache the result of a function
+    with a specified expiration time.
+    """
+    def wrapper(*args, **kwargs):
+        """
+        Generate a cache key based on the function name and arguments
+        """
+        cache_key = f"cache:{func.__name__}:{args}"
+
+        cached_result = redis_client.get(cache_key)
+        if cached_result:
+            return cached_result.decode('utf-8')
+
+        result = func(*args, **kwargs)
+
+        redis_client.setex(cache_key, 10, result)
+
         return result
 
-def cache_with_expiration(expiration: int):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            url = args[0]
-            key = f"count:{url}"
-            if key in cache:
-                count, timestamp = cache[key]
-                if time.time() - timestamp > expiration:
-                    result = func(*args, **kwargs)
-                    cache[key] = (count+1, time.time())
-                    return result
-                else:
-                    cache[key] = (count+1, timestamp)
-                    return
+    return wrapper
+
+
+@cache_decorator
+def get_page(url: str) -> str:
+    """
+    Get the HTML content of a particular URL
+    and cache the result with an expiration time of 10 seconds.
+    """
+    redis_client.incr(f"count:{url}")
+
+    cached_data = redis_client.get(url)
+    if cached_data:
+        return cached_data.decode('utf-8')
+
+    response = requests.get(url)
+    html_content = response.text
+
+    redis_client.setex(url, 10, html_content)
+
+    return html_content
